@@ -36,6 +36,26 @@ export interface ProjectFile {
   size: number;
   content: string;
   enabled: boolean;
+  summary?: string;
+  keywords?: string[];
+  chunkCount?: number;
+  processingStatus?: 'ready' | 'processing' | 'error';
+  errorMessage?: string;
+  includeMode?: 'auto' | 'summary_only' | 'full';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectFileChunk {
+  id: string;
+  projectId: string;
+  fileId: string;
+  index: number;
+  title?: string;
+  content: string;
+  summary?: string;
+  keywords?: string[];
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -30,9 +30,9 @@ import { useApp } from '@/contexts/AppContext';
 import { Button, EmptyState, LoadingIndicator, Modal, FilesPanel } from '@/components';
 import { sendMessage, ApiError } from '@/services/api';
 import { formatTokens, formatDate } from '@/utils/helpers';
-import { Message, Project, QUICK_ACTIONS } from '@/types';
+import { Message, Project, ProjectFile, QUICK_ACTIONS } from '@/types';
 import * as storage from '@/services/storage';
-import { pickAndReadFile } from '@/utils/fileImport';
+import { FileSizeLimitError } from '@/utils/fileImport';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -88,7 +88,13 @@ export default function ProjectScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { colors } = useTheme();
-  const { projects, loadProjects, selectProject, currentProject, messages, loadMessages, memories, loadMemories, files, loadingFiles, loadFiles, createFile, updateFile, deleteFile, settings, updateProject } = useApp();
+  const {
+    projects, loadProjects, selectProject, currentProject,
+    messages, loadMessages,
+    memories, loadMemories,
+    files, loadingFiles, loadFiles, createProjectFileFromImport, updateFile, deleteFile, loadFileChunks,
+    settings, updateProject,
+  } = useApp();
 
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -221,31 +227,14 @@ export default function ProjectScreen() {
 
   const handleImportFile = async () => {
     if (!currentProject) return;
-    const imported = await pickAndReadFile();
-    if (!imported) return;
-
-    const SIZE_WARNING_THRESHOLD = 50000; // 50 KB
-    const doImport = async () => {
-      await createFile(
-        currentProject.id,
-        imported.name,
-        imported.mimeType,
-        imported.size,
-        imported.content
-      );
-    };
-
-    if (imported.size > SIZE_WARNING_THRESHOLD) {
-      Alert.alert(
-        'Large File',
-        `"${imported.name}" is ${(imported.size / 1024).toFixed(1)} KB. Large files will increase token usage with every AI request. Import anyway?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Import', onPress: doImport },
-        ]
-      );
-    } else {
-      await doImport();
+    try {
+      await createProjectFileFromImport(currentProject.id);
+    } catch (err) {
+      if (err instanceof FileSizeLimitError) {
+        Alert.alert('File Too Large', err.message);
+      } else {
+        Alert.alert('Import Failed', 'Could not read the file. Please try another file.');
+      }
     }
   };
 
@@ -532,15 +521,15 @@ Consider pacing, tension building, and character development.`;
         )}
         {currentTab === 'tools' && renderTools()}
         {currentTab === 'files' && (
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
-            <FilesPanel
-              files={files}
-              onAddFile={handleImportFile}
-              onDeleteFile={deleteFile}
-              onToggleFile={(id, enabled) => updateFile(id, { enabled })}
-              loading={loadingFiles}
-            />
-          </ScrollView>
+          <FilesPanel
+            files={files}
+            onAddFile={handleImportFile}
+            onDeleteFile={deleteFile}
+            onToggleFile={(id, enabled) => updateFile(id, { enabled })}
+            onChangeMode={(id, mode) => updateFile(id, { includeMode: mode })}
+            onLoadChunks={loadFileChunks}
+            loading={loadingFiles}
+          />
         )}
 
         {/* System Prompt Modal */}

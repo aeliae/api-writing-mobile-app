@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Project, Message, MemoryEntry, ProjectFile, Settings, ApiUsage } from '@/types';
+import { Project, Message, MemoryEntry, ProjectFile, ProjectFileChunk, Settings, ApiUsage } from '@/types';
 import { generateId } from '@/utils/helpers';
 
 const KEYS = {
@@ -7,6 +7,7 @@ const KEYS = {
   MESSAGES: 'cw_messages',
   MEMORIES: 'cw_memories',
   PROJECT_FILES: 'cw_project_files',
+  PROJECT_FILE_CHUNKS: 'cw_project_file_chunks',
   SETTINGS: 'cw_settings',
 };
 
@@ -52,13 +53,14 @@ export async function updateProject(id: string, updates: Partial<Project>): Prom
 export async function deleteProject(id: string): Promise<void> {
   const projects = await getProjects();
   await saveProjects(projects.filter(p => p.id !== id));
-  // Also delete associated messages, memories, and files
   const messages = await getAllMessages();
   await saveMessages(messages.filter(msg => msg.projectId !== id));
   const memories = await getAllMemories();
   await saveMemories(memories.filter(m => m.projectId !== id));
   const files = await getAllFiles();
   await saveFiles(files.filter(f => f.projectId !== id));
+  const chunks = await getAllFileChunks();
+  await saveFileChunks(chunks.filter(c => c.projectId !== id));
 }
 
 // Message operations
@@ -250,6 +252,70 @@ export async function updateProjectFile(id: string, updates: Partial<ProjectFile
 export async function deleteProjectFile(id: string): Promise<void> {
   const files = await getAllFiles();
   await saveFiles(files.filter(f => f.id !== id));
+  await deleteFileChunks(id);
+}
+
+// Project File Chunk operations
+export async function getAllFileChunks(): Promise<ProjectFileChunk[]> {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.PROJECT_FILE_CHUNKS);
+    return data ? JSON.parse(data) : [];
+  } catch (error) {
+    console.error('Error loading file chunks:', error);
+    return [];
+  }
+}
+
+export async function saveFileChunks(chunks: ProjectFileChunk[]): Promise<void> {
+  await AsyncStorage.setItem(KEYS.PROJECT_FILE_CHUNKS, JSON.stringify(chunks));
+}
+
+export async function getFileChunks(fileId: string): Promise<ProjectFileChunk[]> {
+  const chunks = await getAllFileChunks();
+  return chunks.filter(c => c.fileId === fileId).sort((a, b) => a.index - b.index);
+}
+
+export async function getProjectFileChunks(projectId: string): Promise<ProjectFileChunk[]> {
+  const chunks = await getAllFileChunks();
+  return chunks.filter(c => c.projectId === projectId).sort((a, b) => a.index - b.index);
+}
+
+export async function createFileChunks(
+  projectId: string,
+  fileId: string,
+  rawChunks: Array<{ title?: string; content: string; summary?: string; keywords?: string[] }>
+): Promise<ProjectFileChunk[]> {
+  const all = await getAllFileChunks();
+  const now = new Date().toISOString();
+  const newChunks: ProjectFileChunk[] = rawChunks.map((c, index) => ({
+    id: generateId(),
+    projectId,
+    fileId,
+    index,
+    title: c.title,
+    content: c.content,
+    summary: c.summary,
+    keywords: c.keywords,
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await saveFileChunks([...all, ...newChunks]);
+  return newChunks;
+}
+
+export async function updateFileChunk(id: string, updates: Partial<ProjectFileChunk>): Promise<void> {
+  const chunks = await getAllFileChunks();
+  const index = chunks.findIndex(c => c.id === id);
+  if (index !== -1) {
+    chunks[index] = { ...chunks[index], ...updates, updatedAt: new Date().toISOString() };
+    await saveFileChunks(chunks);
+  }
+}
+
+export async function deleteFileChunks(fileId: string): Promise<void> {
+  const chunks = await getAllFileChunks();
+  await saveFileChunks(chunks.filter(c => c.fileId !== fileId));
 }
 
 // Export conversation as text

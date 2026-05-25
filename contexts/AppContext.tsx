@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Project, Message, MemoryEntry, ProjectFile, Settings } from '@/types';
+import { Project, Message, MemoryEntry, ProjectFile, ProjectFileChunk, Settings } from '@/types';
 import * as storage from '@/services/storage';
+import { pickAndReadFile, FileSizeLimitError } from '@/utils/fileImport';
+import { normalizeFileText, chunkText, extractKeywords, createLocalSummary } from '@/utils/fileProcessing';
 
 interface AppContextType {
   // Projects
@@ -31,9 +33,11 @@ interface AppContextType {
   files: ProjectFile[];
   loadingFiles: boolean;
   loadFiles: (projectId: string) => Promise<void>;
-  createFile: (projectId: string, name: string, mimeType: string, size: number, content: string) => Promise<ProjectFile>;
+  /** Pick a file from the device, process it, and save it with chunks. Throws FileSizeLimitError on oversized files. */
+  createProjectFileFromImport: (projectId: string) => Promise<ProjectFile | null>;
   updateFile: (id: string, updates: Partial<ProjectFile>) => Promise<void>;
   deleteFile: (id: string) => Promise<void>;
+  loadFileChunks: (fileId: string) => Promise<ProjectFileChunk[]>;
 
   // Settings
   settings: Settings;
@@ -77,6 +81,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loadMessages = useCallback(async (projectId: string) => {
+    setLoadingMessages(true);
+    try {
+      const loadedMessages = await storage.getMessages(projectId);
+      setMessages(loadedMessages);
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, []);
+
+  const loadMemories = useCallback(async (projectId: string) => {
+    setLoadingMemories(true);
+    try {
+      const all = await storage.getAllMemories();
+      setMemories(all.filter(m => m.projectId === projectId));
+    } finally {
+      setLoadingMemories(false);
+    }
+  }, []);
+
+  const loadFiles = useCallback(async (projectId: string) => {
+    setLoadingFiles(true);
+    try {
+      const loadedFiles = await storage.getProjectFiles(projectId);
+      setFiles(loadedFiles);
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
   const selectProject = useCallback((project: Project | null) => {
     setCurrentProject(project);
     if (project) {
@@ -88,6 +122,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setMemories([]);
       setFiles([]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const createProject = useCallback(async (name: string, systemPrompt?: string) => {
@@ -115,30 +150,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [loadProjects, currentProject]);
 
-  const loadMessages = useCallback(async (projectId: string) => {
-    setLoadingMessages(true);
-    try {
-      const loadedMessages = await storage.getMessages(projectId);
-      setMessages(loadedMessages);
-    } finally {
-      setLoadingMessages(false);
-    }
-  }, []);
-
   const clearMessages = useCallback(async (projectId: string) => {
     await storage.clearProjectMessages(projectId);
     await loadMessages(projectId);
   }, [loadMessages]);
-
-  const loadMemories = useCallback(async (projectId: string) => {
-    setLoadingMemories(true);
-    try {
-      const loadedMemories = await storage.getAllMemories();
-      setMemories(loadedMemories.filter(m => m.projectId === projectId));
-    } finally {
-      setLoadingMemories(false);
-    }
-  }, []);
 
   const createMemory = useCallback(async (projectId: string, title: string, content: string) => {
     const memory = await storage.createMemory(projectId, title, content);
@@ -148,56 +163,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateMemory = useCallback(async (id: string, updates: Partial<MemoryEntry>) => {
     await storage.updateMemory(id, updates);
-    if (currentProject) {
-      await loadMemories(currentProject.id);
-    }
+    if (currentProject) await loadMemories(currentProject.id);
   }, [loadMemories, currentProject]);
 
   const deleteMemory = useCallback(async (id: string) => {
     await storage.deleteMemory(id);
-    if (currentProject) {
-      await loadMemories(currentProject.id);
-    }
+    if (currentProject) await loadMemories(currentProject.id);
   }, [loadMemories, currentProject]);
 
-  const loadFiles = useCallback(async (projectId: string) => {
-    setLoadingFiles(true);
-    try {
-      const loadedFiles = await storage.getProjectFiles(projectId);
-      setFiles(loadedFiles);
-    } finally {
-      setLoadingFiles(false);
-    }
+  const createProjectFileFromImport = useCallback(async (projectId: string): Promise<ProjectFile | null> => {
+    // May throw FileSizeLimitError — callers should handle it
+    const imported = await pickAndReadFile();
+    if (!imported) return null;
+
+    const normalized = normalizeFileText(imported.content);
+    const summary = createLocalSummary(normalized);
+    const keywords = extractKeywords(normalized);
+    const rawChunks = chunkText(normalized);
+
+    // Save the file record first (processingStatus = 'processing')
+    const file = await storage.createProjectFile(projectId, imported.name, imported.mimeType, imported.size, normalized);
+
+    // Save chunks
+    await storage.createFileChunks(projectId, file.id, rawChunks);
+
+    // Update file with processed metadata
+    await storage.updateProjectFile(file.id, {
+      summary,
+      keywords,
+      chunkCount: rawChunks.length,
+      processingStatus: 'ready',
+      includeMode: 'auto',
+    });
+
+    await loadFiles(projectId);
+    return { ...file, summary, keywords, chunkCount: rawChunks.length, processingStatus: 'ready', includeMode: 'auto' };
+  }, [loadFiles]);
+
+  const updateFile = useCallback(async (id: string, updates: Partial<ProjectFile>) => {
+    await storage.updateProjectFile(id, updates);
+    if (currentProject) await loadFiles(currentProject.id);
+  }, [loadFiles, currentProject]);
+
+  const deleteFile = useCallback(async (id: string) => {
+    await storage.deleteProjectFile(id);
+    if (currentProject) await loadFiles(currentProject.id);
+  }, [loadFiles, currentProject]);
+
+  const loadFileChunks = useCallback(async (fileId: string): Promise<ProjectFileChunk[]> => {
+    return storage.getFileChunks(fileId);
   }, []);
-
-  const createFile = useCallback(
-    async (projectId: string, name: string, mimeType: string, size: number, content: string) => {
-      const file = await storage.createProjectFile(projectId, name, mimeType, size, content);
-      await loadFiles(projectId);
-      return file;
-    },
-    [loadFiles]
-  );
-
-  const updateFile = useCallback(
-    async (id: string, updates: Partial<ProjectFile>) => {
-      await storage.updateProjectFile(id, updates);
-      if (currentProject) {
-        await loadFiles(currentProject.id);
-      }
-    },
-    [loadFiles, currentProject]
-  );
-
-  const deleteFile = useCallback(
-    async (id: string) => {
-      await storage.deleteProjectFile(id);
-      if (currentProject) {
-        await loadFiles(currentProject.id);
-      }
-    },
-    [loadFiles, currentProject]
-  );
 
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
@@ -214,7 +229,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSettings(prev => ({ ...prev, ...updates }));
   }, []);
 
-  // Load settings on mount
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
@@ -241,9 +255,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     files,
     loadingFiles,
     loadFiles,
-    createFile,
+    createProjectFileFromImport,
     updateFile,
     deleteFile,
+    loadFileChunks,
     settings,
     loadingSettings,
     loadSettings,
