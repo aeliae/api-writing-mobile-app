@@ -28,6 +28,18 @@ export interface MemoryEntry {
   updatedAt: string;
 }
 
+export interface ProjectFile {
+  id: string;
+  projectId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  content: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Settings {
   openRouterApiKey: string;
   selectedModel: string;

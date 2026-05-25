@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Project, Message, MemoryEntry, Settings } from '@/types';
+import { Project, Message, MemoryEntry, ProjectFile, Settings } from '@/types';
 import * as storage from '@/services/storage';
 
 interface AppContextType {
@@ -27,6 +27,14 @@ interface AppContextType {
   updateMemory: (id: string, updates: Partial<MemoryEntry>) => Promise<void>;
   deleteMemory: (id: string) => Promise<void>;
 
+  // Project Files
+  files: ProjectFile[];
+  loadingFiles: boolean;
+  loadFiles: (projectId: string) => Promise<void>;
+  createFile: (projectId: string, name: string, mimeType: string, size: number, content: string) => Promise<ProjectFile>;
+  updateFile: (id: string, updates: Partial<ProjectFile>) => Promise<void>;
+  deleteFile: (id: string) => Promise<void>;
+
   // Settings
   settings: Settings;
   loadingSettings: boolean;
@@ -46,6 +54,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [loadingMemories, setLoadingMemories] = useState(false);
+
+  const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
 
   const [settings, setSettings] = useState<Settings>({
     openRouterApiKey: '',
@@ -71,9 +82,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (project) {
       loadMessages(project.id);
       loadMemories(project.id);
+      loadFiles(project.id);
     } else {
       setMessages([]);
       setMemories([]);
+      setFiles([]);
     }
   }, []);
 
@@ -98,6 +111,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentProject(null);
       setMessages([]);
       setMemories([]);
+      setFiles([]);
     }
   }, [loadProjects, currentProject]);
 
@@ -146,6 +160,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [loadMemories, currentProject]);
 
+  const loadFiles = useCallback(async (projectId: string) => {
+    setLoadingFiles(true);
+    try {
+      const loadedFiles = await storage.getProjectFiles(projectId);
+      setFiles(loadedFiles);
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
+  const createFile = useCallback(
+    async (projectId: string, name: string, mimeType: string, size: number, content: string) => {
+      const file = await storage.createProjectFile(projectId, name, mimeType, size, content);
+      await loadFiles(projectId);
+      return file;
+    },
+    [loadFiles]
+  );
+
+  const updateFile = useCallback(
+    async (id: string, updates: Partial<ProjectFile>) => {
+      await storage.updateProjectFile(id, updates);
+      if (currentProject) {
+        await loadFiles(currentProject.id);
+      }
+    },
+    [loadFiles, currentProject]
+  );
+
+  const deleteFile = useCallback(
+    async (id: string) => {
+      await storage.deleteProjectFile(id);
+      if (currentProject) {
+        await loadFiles(currentProject.id);
+      }
+    },
+    [loadFiles, currentProject]
+  );
+
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
     try {
@@ -185,6 +238,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     createMemory,
     updateMemory,
     deleteMemory,
+    files,
+    loadingFiles,
+    loadFiles,
+    createFile,
+    updateFile,
+    deleteFile,
     settings,
     loadingSettings,
     loadSettings,

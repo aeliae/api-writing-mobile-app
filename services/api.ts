@@ -1,5 +1,5 @@
-import { Message, ApiUsage, ChatResponse, MemoryEntry, AVAILABLE_MODELS } from '@/types';
-import { getSettings, getProjectMemories, addMessage, recordApiUsage } from './storage';
+import { Message, ApiUsage, ChatResponse, MemoryEntry, ProjectFile, AVAILABLE_MODELS } from '@/types';
+import { getSettings, getProjectMemories, getProjectFiles, addMessage, recordApiUsage } from './storage';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -41,6 +41,17 @@ function buildMemoryContext(memories: MemoryEntry[]): string {
   let context = '\n\n## Project Memory & Notes:\n\n';
   for (const memory of memories) {
     context += `### ${memory.title}\n${memory.content}\n\n`;
+  }
+  return context;
+}
+
+function buildFilesContext(files: ProjectFile[]): string {
+  const enabledFiles = files.filter(f => f.enabled);
+  if (enabledFiles.length === 0) return '';
+
+  let context = '\n\n## Project Files / Reference Material:\n\n';
+  for (const file of enabledFiles) {
+    context += `### ${file.name}\n${file.content}\n\n`;
   }
   return context;
 }
@@ -92,14 +103,20 @@ export async function sendMessage(
   // Build messages array
   const messages: OpenRouterMessage[] = [];
 
-  // Get memory entries
+  // Get memory entries and project files
   const memories = await getProjectMemories(projectId);
   const memoryContext = buildMemoryContext(memories);
 
-  // Build full system prompt with memory
+  const projectFiles = await getProjectFiles(projectId);
+  const filesContext = buildFilesContext(projectFiles);
+
+  // Build full system prompt with memory and files
   let fullSystemPrompt = systemPrompt;
   if (memoryContext) {
     fullSystemPrompt += memoryContext;
+  }
+  if (filesContext) {
+    fullSystemPrompt += filesContext;
   }
   if (context) {
     fullSystemPrompt += '\n\n' + context;

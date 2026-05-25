@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Project, Message, MemoryEntry, Settings, ApiUsage } from '@/types';
+import { Project, Message, MemoryEntry, ProjectFile, Settings, ApiUsage } from '@/types';
 import { generateId } from '@/utils/helpers';
 
 const KEYS = {
   PROJECTS: 'cw_projects',
   MESSAGES: 'cw_messages',
   MEMORIES: 'cw_memories',
+  PROJECT_FILES: 'cw_project_files',
   SETTINGS: 'cw_settings',
 };
 
@@ -51,11 +52,13 @@ export async function updateProject(id: string, updates: Partial<Project>): Prom
 export async function deleteProject(id: string): Promise<void> {
   const projects = await getProjects();
   await saveProjects(projects.filter(p => p.id !== id));
-  // Also delete associated messages and memories
-  const messages = await getMessages(id);
-  await saveMessages(await getAllMessages().then(m => m.filter(msg => msg.projectId !== id)));
+  // Also delete associated messages, memories, and files
+  const messages = await getAllMessages();
+  await saveMessages(messages.filter(msg => msg.projectId !== id));
   const memories = await getAllMemories();
   await saveMemories(memories.filter(m => m.projectId !== id));
+  const files = await getAllFiles();
+  await saveFiles(files.filter(f => f.projectId !== id));
 }
 
 // Message operations
@@ -189,6 +192,64 @@ export async function recordApiUsage(usage: ApiUsage): Promise<void> {
     history.splice(0, history.length - 100);
   }
   await AsyncStorage.setItem('cw_api_usage', JSON.stringify(history));
+}
+
+// Project File operations
+export async function getAllFiles(): Promise<ProjectFile[]> {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.PROJECT_FILES);
+    return data ? JSON.parse(data) : [];
+  } catch (error) {
+    console.error('Error loading project files:', error);
+    return [];
+  }
+}
+
+export async function saveFiles(files: ProjectFile[]): Promise<void> {
+  await AsyncStorage.setItem(KEYS.PROJECT_FILES, JSON.stringify(files));
+}
+
+export async function getProjectFiles(projectId: string): Promise<ProjectFile[]> {
+  const files = await getAllFiles();
+  return files.filter(f => f.projectId === projectId);
+}
+
+export async function createProjectFile(
+  projectId: string,
+  name: string,
+  mimeType: string,
+  size: number,
+  content: string
+): Promise<ProjectFile> {
+  const files = await getAllFiles();
+  const newFile: ProjectFile = {
+    id: generateId(),
+    projectId,
+    name,
+    mimeType,
+    size,
+    content,
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  files.push(newFile);
+  await saveFiles(files);
+  return newFile;
+}
+
+export async function updateProjectFile(id: string, updates: Partial<ProjectFile>): Promise<void> {
+  const files = await getAllFiles();
+  const index = files.findIndex(f => f.id === id);
+  if (index !== -1) {
+    files[index] = { ...files[index], ...updates, updatedAt: new Date().toISOString() };
+    await saveFiles(files);
+  }
+}
+
+export async function deleteProjectFile(id: string): Promise<void> {
+  const files = await getAllFiles();
+  await saveFiles(files.filter(f => f.id !== id));
 }
 
 // Export conversation as text
