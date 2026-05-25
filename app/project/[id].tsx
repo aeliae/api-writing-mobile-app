@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Share,
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
@@ -32,7 +33,7 @@ import { sendMessage, ApiError } from '@/services/api';
 import { formatTokens, formatDate } from '@/utils/helpers';
 import { Message, Project, ProjectFile, QUICK_ACTIONS } from '@/types';
 import * as storage from '@/services/storage';
-import { FileSizeLimitError } from '@/utils/fileImport';
+import { FileSizeLimitError, UnsupportedFileTypeError } from '@/utils/fileImport';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -208,14 +209,26 @@ export default function ProjectScreen() {
 
   const handleExport = async () => {
     if (!currentProject) return;
-    const text = await storage.exportConversation(currentProject.id);
-    // On web, use clipboard
-    if (Platform.OS === 'web') {
-      navigator.clipboard?.writeText(text);
-      Alert.alert('Copied', 'Conversation copied to clipboard');
-    } else {
-      // On native, show share dialog (simplified - just show alert)
-      Alert.alert('Export', 'Copy the conversation text from the alert.');
+    try {
+      const text = await storage.exportConversation(currentProject.id);
+      if (!text.trim()) {
+        Alert.alert('Nothing to Export', 'This conversation is empty.');
+        return;
+      }
+
+      if (Platform.OS === 'web') {
+        await navigator.clipboard?.writeText(text);
+        Alert.alert('Copied', 'Conversation copied to clipboard');
+        return;
+      }
+
+      await Share.share({
+        message: text,
+        title: `${currentProject.name} conversation export`,
+      });
+    } catch (error) {
+      console.error('Error exporting conversation:', error);
+      Alert.alert('Export Failed', 'Could not export this conversation. Please try again.');
     }
   };
 
@@ -225,18 +238,25 @@ export default function ProjectScreen() {
     setSystemPromptModalVisible(false);
   };
 
-  const handleImportFile = async () => {
-    if (!currentProject) return;
-    try {
-      await createProjectFileFromImport(currentProject.id);
-    } catch (err) {
-      if (err instanceof FileSizeLimitError) {
-        Alert.alert('File Too Large', err.message);
-      } else {
-        Alert.alert('Import Failed', 'Could not read the file. Please try another file.');
-      }
+const handleImportFile = async () => {
+  if (!currentProject) return;
+
+  try {
+    const imported = await createProjectFileFromImport(currentProject.id);
+
+    if (imported) {
+      Alert.alert('File Imported', `"${imported.name}" was added to this project.`);
     }
-  };
+  } catch (err) {
+    if (err instanceof FileSizeLimitError || err instanceof UnsupportedFileTypeError) {
+      Alert.alert('Import Failed', err.message);
+    } else if (err instanceof Error) {
+      Alert.alert('Import Failed', err.message);
+    } else {
+      Alert.alert('Import Failed', 'Could not read the file. Please try another text file.');
+    }
+  }
+};
 
   // Tools handlers
   const handleGenerateOutline = async () => {
