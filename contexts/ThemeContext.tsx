@@ -4,10 +4,12 @@ import { useApp } from './AppContext';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
+type ColorScheme = Omit<typeof lightColors, 'statusBar'> & { statusBar: 'dark' | 'light' };
+
 interface Theme {
   mode: ThemeMode;
   isDark: boolean;
-  colors: typeof lightColors;
+  colors: ColorScheme;
   toggleTheme: () => void;
   setThemeMode: (mode: ThemeMode) => void;
 }

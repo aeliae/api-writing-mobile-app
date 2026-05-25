@@ -23,18 +23,20 @@ import {
   Pen,
   ChevronDown,
   Sparkles,
+  FolderOpen,
 } from 'lucide-react-native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useApp } from '@/contexts/AppContext';
-import { Button, EmptyState, LoadingIndicator, Modal } from '@/components';
+import { Button, EmptyState, LoadingIndicator, Modal, FilesPanel } from '@/components';
 import { sendMessage, ApiError } from '@/services/api';
 import { formatTokens, formatDate } from '@/utils/helpers';
 import { Message, Project, QUICK_ACTIONS } from '@/types';
 import * as storage from '@/services/storage';
+import { pickAndReadFile } from '@/utils/fileImport';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-type TabType = 'chat' | 'memory' | 'tools';
+type TabType = 'chat' | 'memory' | 'tools' | 'files';
 type ToolsSubTab = 'outline' | 'scenes' | 'quick';
 
 interface ChatMessageProps {
@@ -86,7 +88,7 @@ export default function ProjectScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { colors } = useTheme();
-  const { projects, loadProjects, selectProject, currentProject, messages, loadMessages, memories, loadMemories, settings, updateProject } = useApp();
+  const { projects, loadProjects, selectProject, currentProject, messages, loadMessages, memories, loadMemories, files, loadingFiles, loadFiles, createFile, updateFile, deleteFile, settings, updateProject } = useApp();
 
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -217,6 +219,36 @@ export default function ProjectScreen() {
     setSystemPromptModalVisible(false);
   };
 
+  const handleImportFile = async () => {
+    if (!currentProject) return;
+    const imported = await pickAndReadFile();
+    if (!imported) return;
+
+    const SIZE_WARNING_THRESHOLD = 50000; // 50 KB
+    const doImport = async () => {
+      await createFile(
+        currentProject.id,
+        imported.name,
+        imported.mimeType,
+        imported.size,
+        imported.content
+      );
+    };
+
+    if (imported.size > SIZE_WARNING_THRESHOLD) {
+      Alert.alert(
+        'Large File',
+        `"${imported.name}" is ${(imported.size / 1024).toFixed(1)} KB. Large files will increase token usage with every AI request. Import anyway?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Import', onPress: doImport },
+        ]
+      );
+    } else {
+      await doImport();
+    }
+  };
+
   // Tools handlers
   const handleGenerateOutline = async () => {
     const outlinePrompt = `Generate a structured story outline for the following. Include Act 1, Act 2 (Parts A and B), and Act 3. For each section, provide:
@@ -331,13 +363,12 @@ Consider pacing, tension building, and character development.`;
       <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <TextInput
           ref={inputRef}
-          style={[styles.input, { color: colors.text, backgroundColor: colors.input }]}
+          style={[styles.input, { color: colors.text, backgroundColor: colors.input, maxHeight: 120 }]}
           placeholder="Type your message..."
           placeholderTextColor={colors.placeholder}
           value={inputText}
           onChangeText={setInputText}
           multiline
-          maxHeight={120}
           returnKeyType="default"
           blurOnSubmit={false}
         />
@@ -469,7 +500,7 @@ Consider pacing, tension building, and character development.`;
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         {/* Tab Bar */}
         <View style={[styles.tabBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          {(['chat', 'tools', 'memory'] as TabType[]).map((tab) => (
+          {(['chat', 'tools', 'memory', 'files'] as TabType[]).map((tab) => (
             <TouchableOpacity
               key={tab}
               style={[
@@ -478,16 +509,17 @@ Consider pacing, tension building, and character development.`;
               ]}
               onPress={() => setCurrentTab(tab)}
             >
-              {tab === 'chat' && <Pen size={18} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
-              {tab === 'tools' && <Sparkles size={18} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
-              {tab === 'memory' && <Brain size={18} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
+              {tab === 'chat' && <Pen size={16} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
+              {tab === 'tools' && <Sparkles size={16} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
+              {tab === 'memory' && <Brain size={16} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
+              {tab === 'files' && <FolderOpen size={16} color={currentTab === tab ? colors.primary : colors.textSecondary} />}
               <Text
                 style={[
                   styles.tabText,
                   { color: currentTab === tab ? colors.primary : colors.textSecondary },
                 ]}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === 'files' ? 'Files' : tab.charAt(0).toUpperCase() + tab.slice(1)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -499,6 +531,17 @@ Consider pacing, tension building, and character development.`;
           <MemoryPanel projectId={currentProject.id} colors={colors} />
         )}
         {currentTab === 'tools' && renderTools()}
+        {currentTab === 'files' && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+            <FilesPanel
+              files={files}
+              onAddFile={handleImportFile}
+              onDeleteFile={deleteFile}
+              onToggleFile={(id, enabled) => updateFile(id, { enabled })}
+              loading={loadingFiles}
+            />
+          </ScrollView>
+        )}
 
         {/* System Prompt Modal */}
         <Modal
@@ -847,7 +890,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 20,
     minHeight: 44,
-    maxHeight: 120,
   },
   sendButton: {
     width: 44,
